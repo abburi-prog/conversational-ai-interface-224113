@@ -31,12 +31,13 @@ app = FastAPI(
 # Initialize structured logging (env-driven LOG_LEVEL supported)
 logger = configure_logging()
 
-# Configure CORS: prefer REACT_APP_FRONTEND_URL; always include localhost dev origins
+# Configure CORS: explicitly allow localhost dev origins and optional configured frontend
 frontend_origin = os.getenv("REACT_APP_FRONTEND_URL")
 allowed_origins: List[str] = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+# Keep compatibility: include configured origin if provided
 if frontend_origin and frontend_origin not in allowed_origins:
     allowed_origins.append(frontend_origin)
 
@@ -51,10 +52,14 @@ app.add_middleware(
 # Startup logging for diagnostics (no secrets)
 @app.on_event("startup")
 async def _on_startup() -> None:
+    # Emit concise startup log confirming CORS configuration
     logger.info(
         "Backend starting with CORS configuration",
         extra={
             "allowed_origins": allowed_origins,
+            "allow_credentials": True,
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
             "log_level": os.getenv("REACT_APP_LOG_LEVEL") or os.getenv("LOG_LEVEL") or "INFO",
         },
     )
