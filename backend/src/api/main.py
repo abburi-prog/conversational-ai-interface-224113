@@ -20,14 +20,16 @@ app = FastAPI(
     openapi_tags=openapi_tags,
 )
 
-# Configure CORS: prefer REACT_APP_FRONTEND_URL; fallback to localhost:3000
+# Configure CORS: prefer REACT_APP_FRONTEND_URL; always include localhost dev origins
 frontend_origin = os.getenv("REACT_APP_FRONTEND_URL")
-allowed_origins: List[str] = []
+allowed_origins: List[str] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 if frontend_origin:
-    allowed_origins = [frontend_origin]
-else:
-    # Development defaults
-    allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # Ensure env origin is also allowed, without duplicates
+    if frontend_origin not in allowed_origins:
+        allowed_origins.append(frontend_origin)
 
 app.add_middleware(
     CORSMiddleware,

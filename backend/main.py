@@ -1,10 +1,9 @@
 from typing import AsyncGenerator, List, Optional
 
 import os
-import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, validator
 
 # PUBLIC_INTERFACE
@@ -43,7 +42,7 @@ app = FastAPI(
     ],
 )
 
-# CORS: allow frontend dev origins
+# CORS: allow frontend dev origins explicitly for React dev server
 allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
