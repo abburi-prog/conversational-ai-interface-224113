@@ -1,10 +1,18 @@
+import os
+import time
 from typing import AsyncGenerator, List, Optional
 
-import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, validator
+
+from src.api.logging_utils import (
+    configure_logging,
+    get_request_id,
+    build_request_log_extra,
+    sanitize_headers_for_log,
+)
 
 # PUBLIC_INTERFACE
 class ChatMessage(BaseModel):
@@ -42,6 +50,9 @@ app = FastAPI(
     ],
 )
 
+# Initialize logging
+logger = configure_logging()
+
 # CORS: allow frontend dev origins explicitly for React dev server
 allowed_origins = [
     "http://localhost:3000",
@@ -54,6 +65,60 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    logger.info(
+        "Backend main.py startup",
+        extra={"allowed_origins": allowed_origins, "log_level": os.getenv("REACT_APP_LOG_LEVEL") or os.getenv("LOG_LEVEL") or "INFO"},
+    )
+
+# Middleware for structured request logging
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    req_id = get_request_id(request.headers.get("x-request-id"))
+    method = request.method
+    path = request.url.path
+    origin = request.headers.get("origin") or request.client.host if request.client else None
+
+    try:
+        headers_to_log = {k: v for k, v in sanitize_headers_for_log(request.headers.items()).items()
+                          if k.lower() in ("host", "user-agent", "origin", "referer", "authorization", "x-api-key")}
+        logger.info(
+            "Incoming request",
+            extra={
+                **build_request_log_extra(method, path, origin, req_id),
+                "headers": headers_to_log,
+            },
+        )
+    except Exception:
+        logger.debug("Failed to log request headers", extra={"request_id": req_id})
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        logger.exception(
+            "Unhandled exception during request",
+            extra={**build_request_log_extra(method, path, origin, req_id), "duration_ms": duration_ms},
+        )
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+    duration_ms = int((time.perf_counter() - start) * 1000)
+    status_code = getattr(response, "status_code", 200)
+
+    logger.info(
+        "Request completed",
+        extra={
+            **build_request_log_extra(method, path, origin, req_id),
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+    if "x-request-id" not in response.headers:
+        response.headers["x-request-id"] = req_id
+    return response
 
 
 def _get_openai_client():
@@ -83,7 +148,15 @@ def _get_openai_client():
 # PUBLIC_INTERFACE
 def health():
     """Health check endpoint returning service info."""
+    logger.info("Healthcheck ping", extra={"path": "/"})
     return {"status": "ok", "service": "talk-2-ai-backend", "version": "0.2.0"}
+
+# PUBLIC_INTERFACE
+@app.get("/api/health", tags=["Chat"], summary="Service health", description="Lightweight health endpoint for connectivity checks.")
+def api_health():
+    """Minimal health endpoint."""
+    logger.info("Healthcheck ping", extra={"path": "/api/health"})
+    return {"status": "ok"}
 
 
 @app.post(
